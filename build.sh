@@ -1,7 +1,5 @@
 #!/bin/bash
 
-git submodule update --init --recursive && KernelSU-Next/setup.sh
-
 abort()
 {
     cd -
@@ -57,17 +55,21 @@ CORES=`cat /proc/cpuinfo | grep -c processor`
 CLANG_DIR=$PWD/toolchain/clang_14
 PATH=$CLANG_DIR/bin:$PATH
 
-# Check if toolchain exists
-if [ ! -f "$CLANG_DIR/bin/clang-14" ]; then
+# Check the compiler and its runtime library. A cancelled extraction may leave
+# clang-14 behind without lib64/libc++.so.1, which makes clang.real unusable.
+if [ ! -x "$CLANG_DIR/bin/clang-14" ] || \
+        [ ! -f "$CLANG_DIR/lib64/libc++.so.1" ]; then
     echo "-----------------------------------------------"
-    echo "Toolchain not found! Downloading..."
+    echo "Toolchain missing or incomplete! Downloading..."
     echo "-----------------------------------------------"
     rm -rf $CLANG_DIR
     mkdir -p $CLANG_DIR
     pushd $CLANG_DIR > /dev/null
-    curl -LJOk https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-13.0.0_r13/clang-r450784d.tar.gz
-    tar xf android-13.0.0_r13-clang-r450784d.tar.gz
-    rm android-13.0.0_r13-clang-r450784d.tar.gz
+    TOOLCHAIN_ARCHIVE="clang-r450784d.tar.gz"
+    curl -fL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-13.0.0_r13/$TOOLCHAIN_ARCHIVE" \
+        -o "$TOOLCHAIN_ARCHIVE" || abort
+    tar xf "$TOOLCHAIN_ARCHIVE" || abort
+    rm "$TOOLCHAIN_ARCHIVE"
     echo "Cleaning up..."
     popd > /dev/null
 fi
@@ -160,7 +162,7 @@ else
 fi
 echo "Generating configuration file..."
 echo "-----------------------------------------------"
-make ${MAKE_ARGS} -j$CORES exynos9830_defconfig $MODEL.config $KSU $RECOVERY || abort
+make ${MAKE_ARGS} -j$CORES exynos9830_defconfig $MODEL.config $KSU ksu_manual.config $RECOVERY || abort
 
 if [ ! -z "$DTBS" ]; then
     MAKE_ARGS="$MAKE_ARGS dtbs"
