@@ -4169,13 +4169,20 @@ static void mark_map_reg(struct bpf_reg_state *regs, u32 regno, u32 id,
 		}
 		if (is_null) {
 			reg->type = SCALAR_VALUE;
-		} else if (reg->map_ptr->inner_map_meta) {
-			reg->type = CONST_PTR_TO_MAP;
-			reg->map_ptr = reg->map_ptr->inner_map_meta;
 		} else if (reg->type == PTR_TO_MEM_OR_NULL) {
 			reg->type = PTR_TO_MEM;
 		} else {
-			reg->type = PTR_TO_MAP_VALUE;
+			/* Only PTR_TO_MAP_VALUE_OR_NULL carries map_ptr.  In
+			 * particular, PTR_TO_MEM_OR_NULL returned by
+			 * bpf_ringbuf_reserve() does not, so it must be handled
+			 * before dereferencing map_ptr.
+			 */
+			if (reg->map_ptr->inner_map_meta) {
+				reg->type = CONST_PTR_TO_MAP;
+				reg->map_ptr = reg->map_ptr->inner_map_meta;
+			} else {
+				reg->type = PTR_TO_MAP_VALUE;
+			}
 		}
 		/* We don't need id from this point onwards anymore, thus we
 		 * should better reset it, so that state pruning has chances
