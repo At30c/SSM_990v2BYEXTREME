@@ -457,6 +457,27 @@ static int memcg_alloc_shrinker_maps(struct mem_cgroup *memcg)
 static void memcg_free_shrinker_maps(struct mem_cgroup *memcg) { }
 #endif /* CONFIG_MEMCG_KMEM */
 
+static unsigned long effective_protection(unsigned long usage,
+		unsigned long parent_usage, unsigned long setting,
+		unsigned long parent_effective, unsigned long siblings_protected)
+{
+	unsigned long protected = min(usage, setting);
+	unsigned long effective = protected;
+
+	if (!(cgrp_dfl_root.flags & CGRP_ROOT_MEMORY_RECURSIVE_PROT))
+		return effective;
+
+	if (parent_effective > siblings_protected && usage > protected) {
+		unsigned long unclaimed = parent_effective - siblings_protected;
+
+		unclaimed *= usage - protected;
+		unclaimed /= parent_usage - siblings_protected;
+		effective += unclaimed;
+	}
+
+	return effective;
+}
+
 /**
  * mem_cgroup_css_from_page - css of the memcg associated with a page
  * @page: page of interest
@@ -5967,9 +5988,8 @@ enum mem_cgroup_protection mem_cgroup_protected(struct mem_cgroup *root,
 						struct mem_cgroup *memcg)
 {
 	struct mem_cgroup *parent;
-	unsigned long emin, parent_emin;
-	unsigned long elow, parent_elow;
-	unsigned long usage;
+	unsigned long emin, elow;
+	unsigned long usage, parent_usage;
 
 	if (mem_cgroup_disabled())
 		return MEMCG_PROT_NONE;
@@ -5994,33 +6014,13 @@ enum mem_cgroup_protection mem_cgroup_protected(struct mem_cgroup *root,
 	if (parent == root)
 		goto exit;
 
-	parent_emin = READ_ONCE(parent->memory.emin);
-	emin = min(emin, parent_emin);
-	if (emin && parent_emin) {
-		unsigned long min_usage, siblings_min_usage;
-
-		min_usage = min(usage, memcg->memory.min);
-		siblings_min_usage = atomic_long_read(
-			&parent->memory.children_min_usage);
-
-		if (min_usage && siblings_min_usage)
-			emin = min(emin, parent_emin * min_usage /
-				   siblings_min_usage);
-	}
-
-	parent_elow = READ_ONCE(parent->memory.elow);
-	elow = min(elow, parent_elow);
-	if (elow && parent_elow) {
-		unsigned long low_usage, siblings_low_usage;
-
-		low_usage = min(usage, memcg->memory.low);
-		siblings_low_usage = atomic_long_read(
-			&parent->memory.children_low_usage);
-
-		if (low_usage && siblings_low_usage)
-			elow = min(elow, parent_elow * low_usage /
-				   siblings_low_usage);
-	}
+	parent_usage = page_counter_read(&parent->memory);
+	emin = effective_protection(usage, parent_usage, memcg->memory.min,
+			READ_ONCE(parent->memory.emin), atomic_long_read(
+			&parent->memory.children_min_usage));
+	elow = effective_protection(usage, parent_usage, memcg->memory.low,
+			READ_ONCE(parent->memory.elow), atomic_long_read(
+			&parent->memory.children_low_usage));
 
 exit:
 	memcg->memory.emin = emin;
